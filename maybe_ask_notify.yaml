@@ -1,0 +1,123 @@
+blueprint:
+  name: Custom actionable notification
+  description: >
+    If a state isn't as desired at a certain time, ask whether to run an action.
+  domain: automation
+  input:
+    desired_state_entity:
+      name: Entity with desired state
+      description: >-
+        Notification will be shown if this entity is **not** in a desired state.
+      selector:
+        entity:
+    desired_state:
+      name: Desired states for that entity
+      description: >-
+        Notification will shown if the selected entity is **not** in any of
+        these states.
+        If it becomes this state while the notification is shown, the notification
+        will be removed.
+      default:
+        - state1
+        - state2
+      selector:
+        object:
+    trigger_time:
+      name: Time to trigger notification
+      selector:
+        time:
+    action_to_perform:
+      name: Action to perform
+      description: Action to perform if the button is pressed
+      selector:
+        action:
+    notification_message:
+      name: Action message
+      description: Main message for the notification
+      default: "Would you like to do the thing?"
+      selector:
+        text:
+    action_title:
+      name: Action title
+      description: Text to show on the action "button"
+      default: "Thing-to-do"
+      selector:
+        text:
+    timeout_duration:
+      name: timeout duration
+      description: How long to wait for button to be pressed
+      default:
+        hours: 1
+      selector:
+        duration:
+    timeout_message:
+      name: Timeout message
+      description: Message to be shown if we time out waiting
+      default: "Didn't do the thing (waited for response)"
+      selector:
+        text:
+    notification_service:
+      name: Notification service
+      default: notify.notify
+      selector:
+        text:
+
+trigger:
+  platform: time
+  at: !input trigger_time
+
+condition:
+  condition: not
+  conditions:
+    - condition: state
+      entity_id: !input desired_state_entity
+      state: !input desired_state
+
+action:
+  - alias: Set up variables
+    variables:
+      action_tag: "{{ 'ACTION_' ~ context.id }}"
+      notification_tag: "{{ 'NOTIFICATION_' ~ context.id }}"
+      notification_service: !input notification_service
+  - alias: Send notification
+    service: !input notification_service
+    data:
+      data:
+        actions:
+          - action: "{{ action_tag }}"
+            title: !input action_title
+        tag: "{{ notification_tag }}"
+      message: !input notification_message
+  - wait_for_trigger:
+      - platform: state
+        entity_id:
+          - !input desired_state_entity
+        to: !input desired_state
+      - platform: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "{{ action_tag }}"
+        id: notification_pressed
+    continue_on_timeout: true
+    timeout: !input timeout_duration
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ wait.trigger == none }}"
+        sequence:
+          - service: !input notification_service
+            data:
+              message: !input timeout_message
+              data:
+                tag: "{{ notification_tag }}"
+          - stop: Timed out waiting for response to notification
+      - conditions:
+          - condition: template
+            value_template: "{{ wait.trigger.id == 'notification_pressed' }}"
+        sequence: !input action_to_perform
+  # Either the state changed on its own or we ran the action
+  - service: !input notification_service
+    data:
+      data:
+        tag: "{{ notification_tag }}"
+      message: clear_notification
